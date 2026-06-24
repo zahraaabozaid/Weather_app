@@ -27,14 +27,12 @@ CREATE TABLE IF NOT EXISTS weather_records (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Add constraints for data integrity
-ALTER TABLE weather_records 
-ADD CONSTRAINT check_humidity_range 
-CHECK (humidity >= 0 AND humidity <= 100);
+-- Add constraints for data integrity (idempotent drops to prevent conflicts on re-run)
+ALTER TABLE weather_records DROP CONSTRAINT IF EXISTS check_humidity_range;
+ALTER TABLE weather_records ADD CONSTRAINT check_humidity_range CHECK (humidity >= 0 AND humidity <= 100);
 
-ALTER TABLE weather_records 
-ADD CONSTRAINT check_temperature_range 
-CHECK (temperature >= -100 AND temperature <= 100);
+ALTER TABLE weather_records DROP CONSTRAINT IF EXISTS check_temperature_range;
+ALTER TABLE weather_records ADD CONSTRAINT check_temperature_range CHECK (temperature >= -100 AND temperature <= 100);
 
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_weather_records_location ON weather_records(location);
