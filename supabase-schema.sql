@@ -45,9 +45,21 @@ CREATE INDEX IF NOT EXISTS idx_weather_records_created_at ON weather_records(cre
 CREATE INDEX IF NOT EXISTS idx_weather_records_latitude_longitude ON weather_records(latitude, longitude);
 CREATE INDEX IF NOT EXISTS idx_weather_records_coordinates ON weather_records USING GIST(coordinates);
 
+-- ============================================================
+-- DEDUPLICATION CLEANUP
+-- Run this block BEFORE creating the unique index below to
+-- permanently remove duplicate location rows (keeping only the
+-- most recently updated record for each city).
+-- ============================================================
+DELETE FROM weather_records
+WHERE id NOT IN (
+  SELECT DISTINCT ON (LOWER(TRIM(location))) id
+  FROM weather_records
+  ORDER BY LOWER(TRIM(location)), updated_at DESC NULLS LAST
+);
+
 -- Unique index on normalised location: enforces the upsert-by-location contract
 -- (the POST /api/weather handler checks by LOWER(location) before deciding to INSERT or UPDATE)
--- NOTE: Run the deduplication block below FIRST if you have existing duplicate rows.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_weather_records_location_unique
   ON weather_records (LOWER(TRIM(location)));
 
@@ -65,24 +77,6 @@ CREATE POLICY "Enable read access for all users" ON weather_records FOR SELECT U
 CREATE POLICY "Enable insert for all users"      ON weather_records FOR INSERT WITH CHECK (true);
 CREATE POLICY "Enable update for all users"      ON weather_records FOR UPDATE USING (true);
 CREATE POLICY "Enable delete for all users"      ON weather_records FOR DELETE USING (true);
-
--- ============================================================
--- DEDUPLICATION CLEANUP
--- Run this block BEFORE creating the unique index above if you
--- already have duplicate location rows in the table (e.g. from
--- searches performed before the upsert fix was deployed).
---
--- It keeps the most recently-updated row for each location and
--- permanently removes the older duplicates.
--- ============================================================
-/*
-DELETE FROM weather_records
-WHERE id NOT IN (
-  SELECT DISTINCT ON (LOWER(TRIM(location))) id
-  FROM weather_records
-  ORDER BY LOWER(TRIM(location)), updated_at DESC NULLS LAST
-);
-*/
 
 -- Add comments for documentation
 COMMENT ON TABLE weather_records IS 'Stores weather data with location information, coordinates, and 5-day forecast';
