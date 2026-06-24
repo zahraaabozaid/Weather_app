@@ -19,26 +19,36 @@ export default function Home() {
   const [mapLocation, setMapLocation] = useState<{ latitude: number; longitude: number; locationName: string } | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
 
-  const handleSearch = async (location: string, date: string) => {
+  const handleSearch = async (location: string, date: string, coordinates?: { latitude: number; longitude: number }) => {
     setIsLoading(true)
     try {
-      // 1. Step 1: Mapbox Geocoding & Live Location Marker Pin
-      const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
-      if (!mapboxToken || mapboxToken.trim() === '' || mapboxToken === 'your_mapbox_access_token_here') {
-        throw new Error('Mapbox API token (NEXT_PUBLIC_MAPBOX_TOKEN) is not configured. Please set it in .env.local.')
+      let latitude: number
+      let longitude: number
+      let placeName = location
+
+      if (coordinates?.latitude !== undefined && coordinates?.longitude !== undefined) {
+        latitude = coordinates.latitude
+        longitude = coordinates.longitude
+      } else {
+        // 1. Step 1: Mapbox Geocoding & Live Location Marker Pin
+        const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+        if (!mapboxToken || mapboxToken.trim() === '' || mapboxToken === 'your_mapbox_access_token_here') {
+          throw new Error('Mapbox API token (NEXT_PUBLIC_MAPBOX_TOKEN) is not configured. Please set it in .env.local.')
+        }
+
+        const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(location)}.json?access_token=${mapboxToken}&limit=1`
+        const geocodingResponse = await fetch(geocodingUrl)
+        const geocodingData = await geocodingResponse.json()
+
+        if (!geocodingData.features || geocodingData.features.length === 0) {
+          throw new Error('Location not found. Please check the spelling and try again.')
+        }
+
+        const feature = geocodingData.features[0]
+        longitude = feature.center[0]
+        latitude = feature.center[1]
+        placeName = feature.place_name || location
       }
-
-      const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(location)}.json?access_token=${mapboxToken}&limit=1`
-      const geocodingResponse = await fetch(geocodingUrl)
-      const geocodingData = await geocodingResponse.json()
-
-      if (!geocodingData.features || geocodingData.features.length === 0) {
-        throw new Error('Location not found. Please check the spelling and try again.')
-      }
-
-      const feature = geocodingData.features[0]
-      const [longitude, latitude] = feature.center
-      const placeName = feature.place_name || location
 
       // Map Update: Update state to trigger map flyTo and render Marker Pin immediately
       setMapLocation({
