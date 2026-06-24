@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS weather_records (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Ensure all columns exist (adds them if they are missing from an older schema version)
+ALTER TABLE weather_records ADD COLUMN IF NOT EXISTS coordinates GEOMETRY(POINT, 4326);
+ALTER TABLE weather_records ADD COLUMN IF NOT EXISTS forecast_json JSONB;
+
 -- Add constraints for data integrity (idempotent drops to prevent conflicts on re-run)
 ALTER TABLE weather_records DROP CONSTRAINT IF EXISTS check_humidity_range;
 ALTER TABLE weather_records ADD CONSTRAINT check_humidity_range CHECK (humidity >= 0 AND humidity <= 100);
