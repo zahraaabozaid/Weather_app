@@ -1,11 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
+// ─── Next.js 15+ requires params to be awaited as a Promise ──────────────────
+type RouteContext = { params: Promise<{ format: string }> }
+
 export async function GET(
   request: NextRequest,
-  { params }: { params: { format: string } }
+  context: RouteContext
 ) {
   try {
+    const { format: rawFormat } = await context.params
+    const fmt = rawFormat?.toLowerCase()
+
+    if (!fmt || (fmt !== 'json' && fmt !== 'csv')) {
+      return NextResponse.json(
+        { error: 'Invalid format. Use "json" or "csv"' },
+        { status: 400 }
+      )
+    }
+
     const { data: records, error } = await supabase
       .from('weather_records')
       .select('*')
@@ -13,64 +26,72 @@ export async function GET(
 
     if (error) throw error
 
-    const format = params.format.toLowerCase()
-
-    if (format === 'json') {
+    if (fmt === 'json') {
       return NextResponse.json(records, {
         headers: {
           'Content-Type': 'application/json',
-          'Content-Disposition': 'attachment; filename="weather-data.json"',
+          'Content-Disposition': `attachment; filename="weather-data-${new Date().toISOString().split('T')[0]}.json"`,
         },
       })
     }
 
-    if (format === 'csv') {
-      const headers = ['ID', 'Location', 'Latitude', 'Longitude', 'Date', 'Temperature (°C)', 'Humidity (%)', 'Description', 'Wind Speed (m/s)', 'Pressure (hPa)', 'Feels Like (°C)', 'Icon', 'Created At', 'Updated At']
-      const rows = records.map((record: any) => [
-        record.id || '',
-        record.location || '',
-        record.latitude || '',
-        record.longitude || '',
-        record.date || '',
-        record.temperature || '',
-        record.humidity || '',
-        record.description || '',
-        record.wind_speed || '',
-        record.pressure || '',
-        record.feels_like || '',
-        record.icon || '',
-        record.created_at || '',
-        record.updated_at || '',
-      ])
+    // ── CSV export ────────────────────────────────────────────────────────────
+    const csvHeaders = [
+      'ID',
+      'Location',
+      'Latitude',
+      'Longitude',
+      'Date',
+      'Temperature (°C)',
+      'Humidity (%)',
+      'Description',
+      'Wind Speed (m/s)',
+      'Pressure (hPa)',
+      'Feels Like (°C)',
+      'Icon',
+      'Created At',
+      'Updated At',
+    ]
 
-      // Proper CSV escaping with BOM for Excel compatibility
-      const escapeCSV = (value: any) => {
-        const stringValue = String(value || '')
-        if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-          return `"${stringValue.replace(/"/g, '""')}"`
-        }
-        return stringValue
+    const escapeCSV = (value: unknown): string => {
+      const str = value === null || value === undefined ? '' : String(value)
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`
       }
-
-      const csvContent = [
-        headers.map(escapeCSV).join(','),
-        ...rows.map((row: any) => row.map(escapeCSV).join(',')),
-      ].join('\n')
-
-      const csvWithBOM = '\uFEFF' + csvContent
-
-      return new NextResponse(csvWithBOM, {
-        headers: {
-          'Content-Type': 'text/csv; charset=utf-8',
-          'Content-Disposition': 'attachment; filename="weather-data.csv"',
-        },
-      })
+      return str
     }
 
-    return NextResponse.json(
-      { error: 'Invalid format. Use "json" or "csv"' },
-      { status: 400 }
-    )
+    const dataRows = (records ?? []).map((r: any) => [
+      r.id ?? '',
+      r.location ?? '',
+      r.latitude ?? '',
+      r.longitude ?? '',
+      r.date ?? '',
+      r.temperature !== undefined ? Math.round(r.temperature * 100) / 100 : '',
+      r.humidity ?? '',
+      r.description ?? '',
+      r.wind_speed !== undefined && r.wind_speed !== null ? r.wind_speed : '',
+      r.pressure !== undefined && r.pressure !== null ? r.pressure : '',
+      r.feels_like !== undefined && r.feels_like !== null ? Math.round(r.feels_like * 100) / 100 : '',
+      r.icon ?? '',
+      r.created_at ?? '',
+      r.updated_at ?? '',
+    ])
+
+    const csvLines = [
+      csvHeaders.map(escapeCSV).join(','),
+      ...dataRows.map((row: unknown[]) => row.map(escapeCSV).join(',')),
+    ].join('\r\n')
+
+    // UTF-8 BOM for Excel compatibility
+    const csvWithBOM = '\uFEFF' + csvLines
+
+    return new NextResponse(csvWithBOM, {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="weather-data-${new Date().toISOString().split('T')[0]}.csv"`,
+      },
+    })
   } catch (error) {
     console.error('Error exporting weather data:', error)
     return NextResponse.json(

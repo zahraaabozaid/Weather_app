@@ -69,19 +69,54 @@ export async function POST(request: NextRequest) {
     const weatherData = weatherResponse.data
     const forecastData = forecastResponse.data
 
+    // Determine the active weather parameters (use forecast if date is in the future/matches forecast hours)
+    let activeTemp = weatherData.main.temp
+    let activeHumidity = weatherData.main.humidity
+    let activeDescription = weatherData.weather[0].description
+    let activeWindSpeed = weatherData.wind?.speed ?? null
+    let activePressure = weatherData.main.pressure
+    let activeFeelsLike = weatherData.main.feels_like
+    let activeIcon = weatherData.weather[0].icon
+
+    if (forecastData.list && forecastData.list.length > 0) {
+      const targetTime = searchDate.getTime()
+      let closestItem = forecastData.list[0]
+      let minDiff = Math.abs(new Date(closestItem.dt * 1000).getTime() - targetTime)
+
+      for (const item of forecastData.list) {
+        const itemTime = new Date(item.dt * 1000).getTime()
+        const diff = Math.abs(itemTime - targetTime)
+        if (diff < minDiff) {
+          minDiff = diff
+          closestItem = item
+        }
+      }
+
+      // If the closest forecast is within 24 hours of the target date, use the forecast data
+      if (minDiff < 24 * 60 * 60 * 1000) {
+        activeTemp = closestItem.main.temp
+        activeHumidity = closestItem.main.humidity
+        activeDescription = closestItem.weather[0].description
+        activeWindSpeed = closestItem.wind?.speed ?? null
+        activePressure = closestItem.main.pressure
+        activeFeelsLike = closestItem.main.feels_like
+        activeIcon = closestItem.weather[0].icon
+      }
+    }
+
     // Build the record payload with all refreshed fields
     const recordPayload = {
       location: location,
       latitude: latitude,
       longitude: longitude,
       date: searchDate.toISOString(),
-      temperature: weatherData.main.temp,
-      humidity: weatherData.main.humidity,
-      description: weatherData.weather[0].description,
-      wind_speed: weatherData.wind?.speed ?? null,
-      pressure: weatherData.main.pressure,
-      feels_like: weatherData.main.feels_like,
-      icon: weatherData.weather[0].icon,
+      temperature: activeTemp,
+      humidity: activeHumidity,
+      description: activeDescription,
+      wind_speed: activeWindSpeed,
+      pressure: activePressure,
+      feels_like: activeFeelsLike,
+      icon: activeIcon,
       forecast_json: forecastData,
     }
 

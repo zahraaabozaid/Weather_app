@@ -43,6 +43,65 @@ CREATE INDEX IF NOT EXISTS idx_weather_records_created_at ON weather_records(cre
 CREATE INDEX IF NOT EXISTS idx_weather_records_latitude_longitude ON weather_records(latitude, longitude);
 CREATE INDEX IF NOT EXISTS idx_weather_records_coordinates ON weather_records USING GIST(coordinates);
 
+-- Unique index on normalised location: enforces the upsert-by-location contract
+-- (the POST /api/weather handler checks by LOWER(location) before deciding to INSERT or UPDATE)
+-- NOTE: Run the deduplication block below FIRST if you have existing duplicate rows.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_weather_records_location_unique
+  ON weather_records (LOWER(TRIM(location)));
+
+-- Enable Row Level Security (optional, recommended for production)
+ALTER TABLE weather_records ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if they exist to avoid conflicts
+DROP POLICY IF EXISTS "Enable read access for all users" ON weather_records;
+DROP POLICY IF EXISTS "Enable insert for all users" ON weather_records;
+DROP POLICY IF EXISTS "Enable update for all users" ON weather_records;
+DROP POLICY IF EXISTS "Enable delete for all users" ON weather_records;
+
+-- Allow public access for development (adjust for production)
+CREATE POLICY "Enable read access for all users" ON weather_records FOR SELECT USING (true);
+CREATE POLICY "Enable insert for all users"      ON weather_records FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable update for all users"      ON weather_records FOR UPDATE USING (true);
+CREATE POLICY "Enable delete for all users"      ON weather_records FOR DELETE USING (true);
+
+-- ============================================================
+-- DEDUPLICATION CLEANUP
+-- Run this block BEFORE creating the unique index above if you
+-- already have duplicate location rows in the table (e.g. from
+-- searches performed before the upsert fix was deployed).
+--
+-- It keeps the most recently-updated row for each location and
+-- permanently removes the older duplicates.
+-- ============================================================
+/*
+DELETE FROM weather_records
+WHERE id NOT IN (
+  SELECT DISTINCT ON (LOWER(TRIM(location))) id
+  FROM weather_records
+  ORDER BY LOWER(TRIM(location)), updated_at DESC NULLS LAST
+);
+*/
+
+-- Add comments for documentation
+COMMENT ON TABLE weather_records IS 'Stores weather data with location information, coordinates, and 5-day forecast';
+COMMENT ON COLUMN weather_records.id          IS 'Unique identifier for each weather record (UUID)';
+COMMENT ON COLUMN weather_records.location    IS 'Full place name returned by Mapbox geocoding (unique, case-insensitive)';
+COMMENT ON COLUMN weather_records.latitude    IS 'Geographic latitude coordinate';
+COMMENT ON COLUMN weather_records.longitude   IS 'Geographic longitude coordinate';
+COMMENT ON COLUMN weather_records.coordinates IS 'PostGIS point geometry for spatial queries (auto-updated by trigger)';
+COMMENT ON COLUMN weather_records.date        IS 'User-selected search date stored as a timezone-aware timestamp';
+COMMENT ON COLUMN weather_records.temperature IS 'Current temperature in Celsius from OpenWeatherMap';
+COMMENT ON COLUMN weather_records.humidity    IS 'Relative humidity percentage (0–100)';
+COMMENT ON COLUMN weather_records.description IS 'Short weather condition description (e.g. "clear sky")';
+COMMENT ON COLUMN weather_records.wind_speed  IS 'Wind speed in metres per second';
+COMMENT ON COLUMN weather_records.pressure    IS 'Atmospheric pressure in hPa';
+COMMENT ON COLUMN weather_records.feels_like  IS 'Perceived / "feels like" temperature in Celsius';
+COMMENT ON COLUMN weather_records.icon        IS 'OpenWeatherMap icon code (e.g. "01d")';
+COMMENT ON COLUMN weather_records.forecast_json IS '5-day / 3-hour forecast JSON payload from OpenWeatherMap /forecast endpoint';
+COMMENT ON COLUMN weather_records.created_at  IS 'Timestamp when the record was first inserted';
+COMMENT ON COLUMN weather_records.updated_at  IS 'Timestamp of the most recent upsert (auto-updated by trigger)';
+
+
 -- Create trigger function to automatically update coordinates and updated_at timestamp
 CREATE OR REPLACE FUNCTION update_weather_record_triggers()
 RETURNS TRIGGER AS $$
@@ -66,37 +125,3 @@ CREATE TRIGGER update_weather_records_triggers
     BEFORE INSERT OR UPDATE ON weather_records 
     FOR EACH ROW 
     EXECUTE FUNCTION update_weather_record_triggers();
-
--- Enable Row Level Security (optional, recommended for production)
-ALTER TABLE weather_records ENABLE ROW LEVEL SECURITY;
-
--- Drop existing policies if they exist to avoid conflicts
-DROP POLICY IF EXISTS "Enable read access for all users" ON weather_records;
-DROP POLICY IF EXISTS "Enable insert for all users" ON weather_records;
-DROP POLICY IF EXISTS "Enable update for all users" ON weather_records;
-DROP POLICY IF EXISTS "Enable delete for all users" ON weather_records;
-
--- Allow public access for development (adjust for production)
-CREATE POLICY "Enable read access for all users" ON weather_records FOR SELECT USING (true);
-CREATE POLICY "Enable insert for all users" ON weather_records FOR INSERT WITH CHECK (true);
-CREATE POLICY "Enable update for all users" ON weather_records FOR UPDATE USING (true);
-CREATE POLICY "Enable delete for all users" ON weather_records FOR DELETE USING (true);
-
--- Add comments for documentation
-COMMENT ON TABLE weather_records IS 'Stores weather data with location information, coordinates, and 5-day forecast';
-COMMENT ON COLUMN weather_records.id IS 'Unique identifier for each weather record';
-COMMENT ON COLUMN weather_records.location IS 'Name of the location (city, town, or specific place)';
-COMMENT ON COLUMN weather_records.latitude IS 'Geographic latitude coordinate';
-COMMENT ON COLUMN weather_records.longitude IS 'Geographic longitude coordinate';
-COMMENT ON COLUMN weather_records.coordinates IS 'PostGIS point geometry for spatial queries';
-COMMENT ON COLUMN weather_records.date IS 'Timestamp of the weather reading';
-COMMENT ON COLUMN weather_records.temperature IS 'Temperature in Celsius';
-COMMENT ON COLUMN weather_records.humidity IS 'Humidity percentage (0-100)';
-COMMENT ON COLUMN weather_records.description IS 'Weather condition description';
-COMMENT ON COLUMN weather_records.wind_speed IS 'Wind speed in meters per second';
-COMMENT ON COLUMN weather_records.pressure IS 'Atmospheric pressure in hPa';
-COMMENT ON COLUMN weather_records.feels_like IS 'Perceived temperature in Celsius';
-COMMENT ON COLUMN weather_records.icon IS '/weather icon identifier';
-COMMENT ON COLUMN weather_records.forecast_json IS 'JSONB field storing 5-day forecast data from OpenWeatherMap API';
-COMMENT ON COLUMN weather_records.created_at IS 'Timestamp when the record was created';
-COMMENT ON COLUMN weather_records.updated_at IS 'Timestamp when the record was last updated';
