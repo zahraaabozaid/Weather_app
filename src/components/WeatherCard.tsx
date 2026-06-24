@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion'
 import { Cloud, Droplets, Wind, Thermometer, MapPin } from 'lucide-react'
+import WeatherIcon from './WeatherIcon'
 
 interface WeatherCardProps {
   data: any
@@ -19,8 +20,6 @@ export default function WeatherCard({ data, locationName }: WeatherCardProps) {
   const humidity = data.main?.humidity !== undefined ? data.main.humidity : data.humidity
   const windSpeed = data.wind?.speed !== undefined ? data.wind.speed : data.wind_speed
   const pressure = data.main?.pressure !== undefined ? data.main.pressure : data.pressure
-
-  const iconUrl = `https://openweathermap.org/img/wn/${iconCode}@4x.png`
 
   return (
     <motion.div
@@ -43,10 +42,9 @@ export default function WeatherCard({ data, locationName }: WeatherCardProps) {
             {description}
           </div>
         </div>
-        <img
-          src={iconUrl}
-          alt={description}
-          className="w-32 h-32 object-contain"
+        <WeatherIcon
+          iconCode={iconCode}
+          className="w-24 h-24 text-white drop-shadow-lg"
         />
       </div>
 

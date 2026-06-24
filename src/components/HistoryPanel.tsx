@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { History, Trash2, Edit, Download, Save, FileText, Calendar, Cloud, RefreshCw } from 'lucide-react'
+import { History, Trash2, Edit, Download, Save, Calendar, Cloud, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
+import WeatherIcon from './WeatherIcon'
 import { format } from 'date-fns'
 
 interface WeatherRecord {
@@ -171,28 +172,6 @@ export default function HistoryPanel({ onRecordClick, refreshTrigger = 0 }: Hist
     }
   }
 
-  const handleExportPDF = async () => {
-    try {
-      const response = await fetch('/api/weather/export/pdf')
-      if (response.ok) {
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = 'weather-records.pdf'
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
-        toast.success('Successfully generated PDF export')
-      } else {
-        toast.error('Failed to export PDF')
-      }
-    } catch (error) {
-      toast.error('Failed to export PDF')
-    }
-  }
-
   const handleLocationClick = (record: WeatherRecord) => {
     if (onRecordClick) {
       onRecordClick(record)
@@ -265,13 +244,6 @@ export default function HistoryPanel({ onRecordClick, refreshTrigger = 0 }: Hist
                   <Download className="h-3.5 w-3.5" />
                   CSV
                 </button>
-                <button
-                  onClick={handleExportPDF}
-                  className="flex items-center justify-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition-all font-semibold text-xs border border-red-100"
-                >
-                  <FileText className="h-3.5 w-3.5" />
-                  Export as PDF
-                </button>
               </div>
 
               {/* Weather Records List */}
@@ -297,13 +269,9 @@ export default function HistoryPanel({ onRecordClick, refreshTrigger = 0 }: Hist
                             <div className="flex items-center gap-2 mb-1.5">
                               <span className="font-bold text-gray-800 text-lg">{record.location}</span>
                               {record.icon && (
-                                <img
-                                  src={`https://openweathermap.org/img/wn/${record.icon}@2x.png`}
-                                  alt={record.description}
-                                  className="w-10 h-10 object-contain"
-                                  onError={(e) => {
-                                    e.currentTarget.style.display = 'none'
-                                  }}
+                                <WeatherIcon
+                                  iconCode={record.icon}
+                                  className="w-8 h-8 text-blue-500 drop-shadow-sm"
                                 />
                               )}
                             </div>

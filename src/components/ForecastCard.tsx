@@ -3,9 +3,11 @@
 import { motion } from 'framer-motion'
 import { format } from 'date-fns'
 import { CloudRain, Compass, Thermometer } from 'lucide-react'
+import WeatherIcon from './WeatherIcon'
 
 interface ForecastCardProps {
   data: any
+  selectedDate?: string
 }
 
 interface GroupedForecast {
@@ -17,7 +19,7 @@ interface GroupedForecast {
   icon: string
 }
 
-export default function ForecastCard({ data }: ForecastCardProps) {
+export default function ForecastCard({ data, selectedDate }: ForecastCardProps) {
   // Helper to group 3-hour forecast intervals by day
   const getGroupedForecasts = (list: any[]): GroupedForecast[] => {
     const groups: { [key: string]: any[] } = {}
@@ -57,10 +59,29 @@ export default function ForecastCard({ data }: ForecastCardProps) {
   let dailyForecasts: GroupedForecast[] = []
 
   if (data && data.list && data.list.length > 0) {
-    if (data.list.length > 10) {
-      dailyForecasts = getGroupedForecasts(data.list)
+    let listToProcess = data.list
+
+    // Filter to only include forecast entries on or after the selectedDate
+    if (selectedDate) {
+      const selectedTime = new Date(selectedDate)
+      selectedTime.setHours(0, 0, 0, 0)
+      const selectedTimestamp = selectedTime.getTime()
+
+      listToProcess = data.list.filter((item: any) => {
+        const itemTime = new Date(item.dt * 1000).getTime()
+        return itemTime >= selectedTimestamp
+      })
+
+      // Fallback if filter leaves empty results (e.g. date out of range)
+      if (listToProcess.length === 0) {
+        listToProcess = data.list
+      }
+    }
+
+    if (listToProcess.length > 10) {
+      dailyForecasts = getGroupedForecasts(listToProcess)
     } else {
-      dailyForecasts = data.list.map((item: any) => ({
+      dailyForecasts = listToProcess.map((item: any) => ({
         date: new Date(item.dt * 1000),
         tempMax: item.main.temp_max || item.main.temp,
         tempMin: item.main.temp_min || item.main.temp,
@@ -104,10 +125,9 @@ export default function ForecastCard({ data }: ForecastCardProps) {
               {format(forecast.date, 'MMM d')}
             </div>
             
-            <img
-              src={`https://openweathermap.org/img/wn/${forecast.icon}@2x.png`}
-              alt={forecast.description}
-              className="w-16 h-16 mx-auto mb-2 drop-shadow-md object-contain"
+            <WeatherIcon
+              iconCode={forecast.icon}
+              className="w-12 h-12 mx-auto mb-2 text-blue-500 drop-shadow-md"
             />
             
             <div className="text-base font-extrabold text-gray-800 flex items-center justify-center gap-1">

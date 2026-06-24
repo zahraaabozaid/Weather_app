@@ -242,7 +242,7 @@ export default function Home() {
                 data={weatherData}
                 locationName={locationInfo.name}
               />
-              <ForecastCard data={forecastData} />
+              <ForecastCard data={forecastData} selectedDate={weatherData?.date} />
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
