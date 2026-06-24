@@ -2,277 +2,351 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { History, Trash2, Edit, Download, X, Save } from 'lucide-react'
+import { History, Trash2, Edit, Download, Save, FileText, Calendar, Cloud, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 
 interface WeatherRecord {
   id: string
   location: string
+  latitude: number
+  longitude: number
   date: string
   temperature: number
   humidity: number
   description: string
-  createdAt: string
+  wind_speed: number
+  pressure: number
+  feels_like: number
+  icon: string
+  forecast_json: any
+  created_at: string
+  updated_at: string
 }
 
-export default function HistoryPanel() {
-  const [isOpen, setIsOpen] = useState(false)
+interface HistoryPanelProps {
+  onRecordClick?: (record: WeatherRecord) => void
+  refreshTrigger?: number
+}
+
+export default function HistoryPanel({ onRecordClick, refreshTrigger = 0 }: HistoryPanelProps) {
   const [records, setRecords] = useState<WeatherRecord[]>([])
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState({
-    location: '',
-    date: '',
-    temperature: 0,
-    humidity: 0,
-    description: '',
-  })
+  const [isLoading, setIsLoading] = useState(false)
+  const [isCollapsed, setIsCollapsed] = useState(true)
 
   useEffect(() => {
-    if (isOpen) {
-      fetchRecords()
-    }
-  }, [isOpen])
+    fetchRecords()
+  }, [refreshTrigger])
 
   const fetchRecords = async () => {
+    setIsLoading(true)
     try {
       const response = await fetch('/api/weather')
-      const data = await response.json()
-      setRecords(data)
+      if (response.ok) {
+        const data = await response.json()
+        setRecords(data)
+      } else {
+        toast.error('Failed to load saved weather records')
+      }
     } catch (error) {
       toast.error('Failed to fetch history')
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent loading the record when deleting
+
+    // ── Optimistic UI update: remove the row from state immediately ──────────
+    // This gives instant visual feedback without waiting for the server round-trip.
+    setRecords((prev) => prev.filter((item) => item.id !== id))
+
     try {
       const response = await fetch(`/api/weather/${id}`, {
         method: 'DELETE',
       })
       if (response.ok) {
-        toast.success('Record deleted successfully')
-        fetchRecords()
+        toast.success('Weather record deleted successfully')
       } else {
-        toast.error('Failed to delete record')
+        // Server rejected the delete — restore state by re-fetching
+        toast.error('Failed to delete record. Restoring list...')
+        fetchRecords()
       }
     } catch (error) {
-      toast.error('Failed to delete record')
+      // Network error — restore state by re-fetching
+      toast.error('Failed to delete record. Please check your connection.')
+      fetchRecords()
     }
   }
 
-  const handleEdit = (record: WeatherRecord) => {
-    setEditingId(record.id)
-    setEditForm({
-      location: record.location,
-      date: record.date.split('T')[0],
-      temperature: record.temperature,
-      humidity: record.humidity,
-      description: record.description,
-    })
+  // ── Trigger a file download from a pre-built Blob ─────────────────────────
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    // Clean up after the browser has had a tick to register the click
+    setTimeout(() => {
+      URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    }, 100)
   }
 
-  const handleSave = async (id: string) => {
+  const handleExport = (formatType: 'json' | 'csv') => {
+    if (records.length === 0) {
+      toast.error('No records to export. Search for a location first.')
+      return
+    }
+
     try {
-      const response = await fetch(`/api/weather/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm),
-      })
-      if (response.ok) {
-        toast.success('Record updated successfully')
-        setEditingId(null)
-        fetchRecords()
-      } else {
-        toast.error('Failed to update record')
+      if (formatType === 'json') {
+        // ── JSON: stringify the entire records state array ─────────────────
+        const jsonString = JSON.stringify(records, null, 2)
+        const blob = new Blob([jsonString], { type: 'application/json' })
+        triggerDownload(blob, `weather-data-${new Date().toISOString().split('T')[0]}.json`)
+        toast.success('Successfully exported as JSON')
+      } else if (formatType === 'csv') {
+        // ── CSV: flatten each record row into a compliant CSV string ────────
+        const escapeCell = (value: unknown): string => {
+          const str = value === null || value === undefined ? '' : String(value)
+          // Wrap in quotes if the cell contains a comma, double-quote, or newline
+          if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+            return `"${str.replace(/"/g, '""')}"`
+          }
+          return str
+        }
+
+        const CSV_HEADERS = [
+          'ID',
+          'Location',
+          'Latitude',
+          'Longitude',
+          'Date',
+          'Temperature (°C)',
+          'Humidity (%)',
+          'Description',
+          'Wind Speed (m/s)',
+          'Pressure (hPa)',
+          'Feels Like (°C)',
+          'Icon',
+          'Created At',
+          'Updated At',
+        ]
+
+        const dataRows = records.map((r) => [
+          r.id,
+          r.location,
+          r.latitude,
+          r.longitude,
+          r.date,
+          r.temperature !== undefined ? Math.round(r.temperature * 100) / 100 : '',
+          r.humidity,
+          r.description,
+          r.wind_speed !== undefined && r.wind_speed !== null ? r.wind_speed : '',
+          r.pressure !== undefined && r.pressure !== null ? r.pressure : '',
+          r.feels_like !== undefined && r.feels_like !== null ? Math.round(r.feels_like * 100) / 100 : '',
+          r.icon,
+          r.created_at,
+          r.updated_at,
+        ])
+
+        const csvLines = [
+          CSV_HEADERS.map(escapeCell).join(','),
+          ...dataRows.map((row) => row.map(escapeCell).join(',')),
+        ].join('\r\n')
+
+        // UTF-8 BOM prefix ensures Excel opens the file with correct encoding
+        const bom = '\uFEFF'
+        const blob = new Blob([bom + csvLines], { type: 'text/csv;charset=utf-8;' })
+        triggerDownload(blob, `weather-data-${new Date().toISOString().split('T')[0]}.csv`)
+        toast.success('Successfully exported as CSV')
       }
-    } catch (error) {
-      toast.error('Failed to update record')
+    } catch (err) {
+      console.error('Export error:', err)
+      toast.error(`Failed to export as ${formatType.toUpperCase()}. Please try again.`)
     }
   }
 
-  const handleExport = async (format: 'json' | 'csv') => {
+  const handleExportPDF = async () => {
     try {
-      const response = await fetch(`/api/weather/export/${format}`)
+      const response = await fetch('/api/weather/export/pdf')
       if (response.ok) {
         const blob = await response.blob()
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `weather-data.${format}`
+        a.download = 'weather-records.pdf'
         document.body.appendChild(a)
         a.click()
         window.URL.revokeObjectURL(url)
         document.body.removeChild(a)
-        toast.success(`Exported as ${format.toUpperCase()}`)
+        toast.success('Successfully generated PDF export')
       } else {
-        toast.error('Failed to export data')
+        toast.error('Failed to export PDF')
       }
     } catch (error) {
-      toast.error('Failed to export data')
+      toast.error('Failed to export PDF')
+    }
+  }
+
+  const handleLocationClick = (record: WeatherRecord) => {
+    if (onRecordClick) {
+      onRecordClick(record)
     }
   }
 
   return (
-    <>
-      <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-full shadow-2xl z-50"
-        title="View History"
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay: 0.3 }}
+      className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden"
+    >
+      {/* Collapsible Header */}
+      <div 
+        className="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors"
+        onClick={() => setIsCollapsed(!isCollapsed)}
       >
-        <History className="h-6 w-6" />
-      </motion.button>
-
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setIsOpen(false)}
+        <div className="flex items-center gap-3">
+          <History className="h-6 w-6 text-blue-600" />
+          <h2 className="text-2xl font-bold text-gray-800">Saved Dashboards & Searches</h2>
+          <span className="bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-1 rounded-full">
+            {records.length} records
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={(e) => { e.stopPropagation(); fetchRecords(); }}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-400 hover:text-gray-600"
+            title="Refresh history"
+            disabled={isLoading}
           >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden"
-            >
-              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <History className="h-6 w-6 text-blue-600" />
-                  <h2 className="text-2xl font-bold text-gray-800">Search History</h2>
-                </div>
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  <X className="h-6 w-6" />
-                </button>
-              </div>
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
+          <motion.div
+            animate={{ rotate: isCollapsed ? 0 : 180 }}
+            transition={{ duration: 0.3 }}
+          >
+            <svg className="h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </motion.div>
+        </div>
+      </div>
 
-              <div className="p-6 border-b border-gray-200 flex gap-3">
+      {/* Collapsible Content */}
+      <AnimatePresence>
+        {!isCollapsed && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="overflow-hidden"
+          >
+            <div className="p-6 pt-0 border-t border-gray-100">
+              {/* Export Buttons */}
+              <div className="flex flex-wrap gap-2 mt-4 mb-6">
                 <button
                   onClick={() => handleExport('json')}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl transition-all font-semibold text-xs border border-blue-100"
                 >
-                  <Download className="h-4 w-4" />
-                  Export JSON
+                  <Download className="h-3.5 w-3.5" />
+                  JSON
                 </button>
                 <button
                   onClick={() => handleExport('csv')}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-green-50 hover:bg-green-100 text-green-600 rounded-xl transition-all font-semibold text-xs border border-green-100"
                 >
-                  <Download className="h-4 w-4" />
-                  Export CSV
+                  <Download className="h-3.5 w-3.5" />
+                  CSV
+                </button>
+                <button
+                  onClick={handleExportPDF}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition-all font-semibold text-xs border border-red-100"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  Export as PDF
                 </button>
               </div>
 
-              <div className="p-6 overflow-y-auto max-h-[60vh]">
+              {/* Weather Records List */}
+              <div className="overflow-x-auto">
                 {records.length === 0 ? (
-                  <p className="text-center text-gray-500 py-8">No search history yet</p>
+                  <div className="text-center py-12 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+                    <Cloud className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-500 font-medium">No saved searches or dashboards found.</p>
+                    <p className="text-sm text-gray-400 mt-1">Search for a location or click 'Current Location' to save data.</p>
+                  </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
                     {records.map((record) => (
                       <motion.div
                         key={record.id}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="bg-gray-50 rounded-xl p-4 hover:shadow-md transition-shadow"
+                        className="bg-gray-50/80 hover:bg-blue-50/40 rounded-2xl p-4 border border-gray-100 transition-all cursor-pointer shadow-sm hover:shadow"
+                        onClick={() => handleLocationClick(record)}
                       >
-                        {editingId === record.id ? (
-                          <div className="space-y-3">
-                            <input
-                              type="text"
-                              value={editForm.location}
-                              onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                              placeholder="Location"
-                            />
-                            <input
-                              type="date"
-                              value={editForm.date}
-                              onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                            />
-                            <input
-                              type="number"
-                              value={editForm.temperature}
-                              onChange={(e) => setEditForm({ ...editForm, temperature: parseFloat(e.target.value) })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                              placeholder="Temperature"
-                            />
-                            <input
-                              type="number"
-                              value={editForm.humidity}
-                              onChange={(e) => setEditForm({ ...editForm, humidity: parseInt(e.target.value) })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                              placeholder="Humidity"
-                            />
-                            <input
-                              type="text"
-                              value={editForm.description}
-                              onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                              placeholder="Description"
-                            />
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => handleSave(record.id)}
-                                className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
-                              >
-                                <Save className="h-4 w-4" />
-                                Save
-                              </button>
-                              <button
-                                onClick={() => setEditingId(null)}
-                                className="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg transition-colors"
-                              >
-                                Cancel
-                              </button>
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="font-bold text-gray-800 text-lg">{record.location}</span>
+                              {record.icon && (
+                                <img
+                                  src={`https://openweathermap.org/img/wn/${record.icon}@2x.png`}
+                                  alt={record.description}
+                                  className="w-10 h-10 object-contain"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none'
+                                  }}
+                                />
+                              )}
+                            </div>
+                            
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-medium text-gray-550">
+                              <span className="flex items-center gap-1 bg-gray-100/80 px-2 py-0.5 rounded-full">
+                                <Calendar className="h-3.5 w-3.5 text-blue-500" />
+                                {format(new Date(record.date), 'PPP')}
+                              </span>
+                              <span>Temp: <strong className="text-gray-800 font-semibold">{Math.round(record.temperature)}°C</strong></span>
+                              <span>Humidity: <strong className="text-gray-800 font-semibold">{record.humidity}%</strong></span>
+                              <span className="capitalize">Condition: <strong className="text-gray-800 font-semibold">{record.description}</strong></span>
+                            </div>
+
+                            <div className="flex gap-2 mt-2 text-[10px] text-gray-400">
+                              <span>Saved: {format(new Date(record.created_at), 'MMM d, p')}</span>
+                              {record.updated_at !== record.created_at && (
+                                <span>• Updated: {format(new Date(record.updated_at), 'MMM d, p')}</span>
+                              )}
                             </div>
                           </div>
-                        ) : (
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <h4 className="font-semibold text-gray-800">{record.location}</h4>
-                              <p className="text-sm text-gray-600">
-                                {format(new Date(record.date), 'PPP')} • {Math.round(record.temperature)}°C • {record.humidity}% humidity
-                              </p>
-                              <p className="text-sm text-gray-500 capitalize">{record.description}</p>
-                              <p className="text-xs text-gray-400 mt-1">
-                                Saved: {format(new Date(record.created_at), 'PPP p')}
-                              </p>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => handleEdit(record)}
-                                className="p-2 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors"
-                                title="Edit"
-                              >
-                                <Edit className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={() => handleDelete(record.id)}
-                                className="p-2 hover:bg-red-100 text-red-600 rounded-lg transition-colors"
-                                title="Delete"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </div>
+
+                          {/* Delete button only */}
+                          <div className="flex gap-2 w-full md:w-auto justify-end" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={(e) => handleDelete(record.id, e)}
+                              className="flex-1 md:flex-initial flex items-center justify-center gap-1 px-3 py-1.5 hover:bg-red-50 text-red-500 rounded-xl transition-all border border-red-50 hover:border-red-100 font-bold text-xs"
+                              title="Delete entry"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </button>
                           </div>
-                        )}
+                        </div>
                       </motion.div>
                     ))}
                   </div>
                 )}
               </div>
-            </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </>
+    </motion.div>
   )
 }

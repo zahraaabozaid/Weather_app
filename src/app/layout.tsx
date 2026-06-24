@@ -6,8 +6,8 @@ import { Toaster } from "sonner"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Weather App - PM Accelerator",
-  description: "A modern weather application built by PM Accelerator",
+  title: "Weather App",
+  description: "A modern weather application with real-time forecasts and data management",
 }
 
 export default function RootLayout({

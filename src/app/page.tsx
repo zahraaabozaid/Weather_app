@@ -16,14 +16,53 @@ export default function Home() {
   const [locationInfo, setLocationInfo] = useState<any>(null)
   const [youtubeVideos, setYoutubeVideos] = useState<any>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [mapLocation, setMapLocation] = useState<{ latitude: number; longitude: number; locationName: string } | null>(null)
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
 
-  const handleSearch = async (location: string) => {
+  const handleSearch = async (location: string, date: string) => {
     setIsLoading(true)
     try {
-      const response = await fetch('/api/weather/search', {
+      // 1. Step 1: Mapbox Geocoding & Live Location Marker Pin
+      const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+      if (!mapboxToken || mapboxToken.trim() === '' || mapboxToken === 'your_mapbox_access_token_here') {
+        throw new Error('Mapbox API token (NEXT_PUBLIC_MAPBOX_TOKEN) is not configured. Please set it in .env.local.')
+      }
+
+      const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(location)}.json?access_token=${mapboxToken}&limit=1`
+      const geocodingResponse = await fetch(geocodingUrl)
+      const geocodingData = await geocodingResponse.json()
+
+      if (!geocodingData.features || geocodingData.features.length === 0) {
+        throw new Error('Location not found. Please check the spelling and try again.')
+      }
+
+      const feature = geocodingData.features[0]
+      const [longitude, latitude] = feature.center
+      const placeName = feature.place_name || location
+
+      // Map Update: Update state to trigger map flyTo and render Marker Pin immediately
+      setMapLocation({
+        latitude,
+        longitude,
+        locationName: placeName,
+      })
+      setLocationInfo({
+        name: placeName,
+        country: '',
+        latitude,
+        longitude,
+      })
+
+      // 2. Step 2: Fetch Current Weather & 5-Day Forecast Simultaneously
+      const response = await fetch('/api/weather', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ location }),
+        body: JSON.stringify({ 
+          latitude,
+          longitude,
+          location: placeName, 
+          date 
+        }),
       })
 
       const data = await response.json()
@@ -32,16 +71,18 @@ export default function Home() {
         throw new Error(data.error || 'Failed to fetch weather data')
       }
 
-      setWeatherData(data.current)
-      setForecastData(data.forecast)
-      setLocationInfo(data.location)
+      // Set weather data and forecast data
+      setWeatherData(data)
+      if (data.forecast_json) {
+        setForecastData(data.forecast_json)
+      }
 
-      // Fetch YouTube videos
+      // Fetch YouTube videos in the background
       try {
         const youtubeResponse = await fetch('/api/youtube', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ location: data.location.name }),
+          body: JSON.stringify({ location: placeName }),
         })
         const youtubeData = await youtubeResponse.json()
         if (youtubeResponse.ok) {
@@ -51,7 +92,9 @@ export default function Home() {
         console.error('Failed to fetch YouTube videos:', error)
       }
 
-      toast.success('Weather data loaded successfully')
+      // Refresh Saved Dashboard history list
+      setRefreshTrigger(prev => prev + 1)
+      toast.success(`Weather details loaded and saved for ${placeName}`)
     } catch (error: any) {
       toast.error(error.message || 'Failed to fetch weather data')
     } finally {
@@ -70,10 +113,45 @@ export default function Home() {
       async (position) => {
         const { latitude, longitude } = position.coords
         try {
-          const response = await fetch('/api/weather/current', {
+          // 1. Step 1: Mapbox Reverse Geocoding & Live Location Marker Pin
+          const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+          if (!mapboxToken || mapboxToken.trim() === '' || mapboxToken === 'your_mapbox_access_token_here') {
+            throw new Error('Mapbox API token (NEXT_PUBLIC_MAPBOX_TOKEN) is not configured. Please set it in .env.local.')
+          }
+
+          const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?access_token=${mapboxToken}&limit=1`
+          const geocodingResponse = await fetch(geocodingUrl)
+          const geocodingData = await geocodingResponse.json()
+
+          let placeName = 'Current Location'
+          if (geocodingData.features && geocodingData.features.length > 0) {
+            placeName = geocodingData.features[0].place_name
+          }
+
+          // Map Update: Update state to trigger map flyTo and render Marker Pin immediately
+          setMapLocation({
+            latitude,
+            longitude,
+            locationName: placeName,
+          })
+          setLocationInfo({
+            name: placeName,
+            country: '',
+            latitude,
+            longitude,
+          })
+
+          // 2. Step 2: Fetch Current Weather & 5-Day Forecast Simultaneously
+          const dateToday = new Date().toISOString().split('T')[0]
+          const response = await fetch('/api/weather', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ latitude, longitude }),
+            body: JSON.stringify({ 
+              latitude,
+              longitude,
+              location: placeName, 
+              date: dateToday 
+            }),
           })
 
           const data = await response.json()
@@ -82,16 +160,29 @@ export default function Home() {
             throw new Error(data.error || 'Failed to fetch weather data')
           }
 
-          setWeatherData(data.current)
-          setForecastData(data.forecast)
-          setLocationInfo({
-            name: data.current.name,
-            country: data.current.sys.country,
-            latitude: data.current.coord.lat,
-            longitude: data.current.coord.lon,
-          })
+          setWeatherData(data)
+          if (data.forecast_json) {
+            setForecastData(data.forecast_json)
+          }
 
-          toast.success('Weather data loaded successfully')
+          // Fetch YouTube videos
+          try {
+            const youtubeResponse = await fetch('/api/youtube', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ location: placeName }),
+            })
+            const youtubeData = await youtubeResponse.json()
+            if (youtubeResponse.ok) {
+              setYoutubeVideos(youtubeData.videos)
+            }
+          } catch (error) {
+            console.error('Failed to fetch YouTube videos:', error)
+          }
+
+          // Refresh Saved Dashboard history list
+          setRefreshTrigger(prev => prev + 1)
+          toast.success(`Weather details loaded and saved for ${placeName}`)
         } catch (error: any) {
           toast.error(error.message || 'Failed to fetch weather data')
         } finally {
@@ -99,18 +190,37 @@ export default function Home() {
         }
       },
       (error) => {
-        toast.error('Failed to get your location')
+        toast.error('Failed to access your location. Please check browser permissions.')
         setIsLoading(false)
       }
     )
   }
 
+  const handleHistoryRecordClick = (record: any) => {
+    setWeatherData(record)
+    setForecastData(record.forecast_json)
+    setLocationInfo({
+      name: record.location,
+      country: '',
+      latitude: record.latitude,
+      longitude: record.longitude,
+    })
+    setMapLocation({
+      latitude: record.latitude,
+      longitude: record.longitude,
+      locationName: record.location,
+    })
+    toast.success(`Loaded saved dashboard for ${record.location}`)
+  }
+
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 py-12 px-4">
-      <div className="max-w-7xl mx-auto">
-        <div className="text-center mb-12">
-          <h1 className="text-5xl font-bold text-gray-800 mb-4">Weather App</h1>
-          <p className="text-xl text-gray-600">Get real-time weather information for any location</p>
+      <div className="max-w-7xl mx-auto space-y-12">
+        <div className="text-center">
+          <h1 className="text-5xl font-bold text-gray-800 mb-4 tracking-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+            Weather Intelligence Dashboard
+          </h1>
+          <p className="text-xl text-gray-600">Get real-time weather analytics and 5-day forecasts worldwide</p>
         </div>
 
         <WeatherSearch
@@ -126,24 +236,33 @@ export default function Home() {
         )}
 
         {weatherData && locationInfo && !isLoading && (
-          <div className="space-y-8 mt-12">
-            <WeatherCard
-              data={weatherData}
-              locationName={`${locationInfo.name}, ${locationInfo.country}`}
-            />
-            <ForecastCard data={forecastData} />
+          <div className="space-y-8 animate-fadeIn">
+            <div className="grid grid-cols-1 gap-8">
+              <WeatherCard
+                data={weatherData}
+                locationName={locationInfo.name}
+              />
+              <ForecastCard data={forecastData} />
+            </div>
+            
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <MapboxMap
-                latitude={locationInfo.latitude}
-                longitude={locationInfo.longitude}
-                locationName={locationInfo.name}
+                latitude={mapLocation?.latitude || locationInfo.latitude}
+                longitude={mapLocation?.longitude || locationInfo.longitude}
+                locationName={mapLocation?.locationName || locationInfo.name}
+                shouldFlyTo={true}
               />
               {youtubeVideos && <YouTubeVideos videos={youtubeVideos} />}
             </div>
           </div>
         )}
 
-        <HistoryPanel />
+        <div className="pt-8 border-t border-gray-150">
+          <HistoryPanel 
+            onRecordClick={handleHistoryRecordClick} 
+            refreshTrigger={refreshTrigger}
+          />
+        </div>
       </div>
     </main>
   )
